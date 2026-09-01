@@ -1,0 +1,10 @@
+
+pyrogram
+tgcrypto
+motor
+pymongo
+aiohttp
+requests
+Pillow
+python-dotenv
+hachoir
