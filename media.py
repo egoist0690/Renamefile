@@ -1,7 +1,8 @@
-# media.py
 # ============================================================
-# EGOIST6969 RENAME BOT - MEDIA PROCESSOR
-# Download -> Rename -> Caption -> Thumbnail -> Send -> Cleanup
+# EGOIST6969 RENAME BOT
+# media.py
+#
+# Download -> Rename -> Thumbnail/Caption -> Upload -> Cleanup
 # ============================================================
 
 import asyncio
@@ -10,18 +11,32 @@ import os
 import time
 from pathlib import Path
 
-from pyrogram import enums
+from pyrogram import Client
 from pyrogram.types import Message
 
-from config import Config
-from database import get_format, get_thumbnail, get_caption
+from database import (
+    add_temporary_file,
+    delete_temporary_file,
+    get_thumbnail,
+    get_caption,
+)
+
 from rename import rename_file
 
 
+# ============================================================
+# LOGGER
+# ============================================================
+
 LOGGER = logging.getLogger("EGOIST6969.MEDIA")
 
-BASE_DIR = Path(__file__).resolve().parent
-DOWNLOAD_DIR = BASE_DIR / "downloads"
+
+# ============================================================
+# SETTINGS
+# ============================================================
+
+DOWNLOAD_DIR = Path("downloads")
+CLEANUP_DELAY = 5
 
 DOWNLOAD_DIR.mkdir(
     parents=True,
@@ -30,61 +45,145 @@ DOWNLOAD_DIR.mkdir(
 
 
 # ============================================================
-# SAFE DELETE
+# HUMAN READABLE SIZE
 # ============================================================
 
-def safe_delete(path):
+def human_size(size: int) -> str:
 
-    if not path:
+    if not size:
+        return "0 B"
+
+    units = [
+        "B",
+        "KB",
+        "MB",
+        "GB",
+        "TB",
+    ]
+
+    value = float(size)
+
+    for unit in units:
+
+        if value < 1024:
+
+            return f"{value:.1f} {unit}"
+
+        value /= 1024
+
+    return f"{value:.1f} PB"
+
+
+# ============================================================
+# SAFE MESSAGE EDIT
+# ============================================================
+
+async def safe_edit(
+    message,
+    text,
+):
+
+    if not message:
         return
 
     try:
 
-        file_path = Path(path)
+        await message.edit_text(
+            text
+        )
 
-        if file_path.exists():
-            file_path.unlink()
+    except Exception:
+
+        pass
+
+
+# ============================================================
+# PROGRESS CALLBACK
+# ============================================================
+
+def progress_callback(
+    current,
+    total,
+    status_message,
+    start_time,
+    action="Downloading",
+):
+
+    try:
+
+        if not total:
+            return
+
+        now = time.time()
+
+        elapsed = max(
+            now - start_time,
+            0.1,
+        )
+
+        percentage = (
+            current * 100 / total
+        )
+
+        speed = (
+            current / elapsed
+        )
+
+        remaining = (
+            total - current
+        )
+
+        eta = (
+            remaining / speed
+            if speed > 0
+            else 0
+        )
+
+        speed_text = (
+            human_size(
+                int(speed)
+            )
+            + "/s"
+        )
+
+        done_text = human_size(
+            current
+        )
+
+        total_text = human_size(
+            total
+        )
+
+        eta_text = (
+            f"{int(eta)}s"
+            if eta < 60
+            else f"{int(eta / 60)}m"
+        )
+
+        text = (
+            f"📁 <b>{action}</b>\n\n"
+            f"▰▰▰▰▰▰▰▰▰▰\n"
+            f"<b>{percentage:.1f}%</b>\n\n"
+            f"📦 {done_text} / {total_text}\n"
+            f"🚀 {speed_text}\n"
+            f"⏱️ ETA: {eta_text}"
+        )
+
+        # Pyrogram calls this very frequently.
+        # Schedule the edit instead of blocking download.
+        asyncio.create_task(
+            safe_edit(
+                status_message,
+                text,
+            )
+        )
 
     except Exception as e:
 
-        LOGGER.warning(
-            "Could not delete %s: %s",
-            path,
+        LOGGER.debug(
+            "Progress error: %s",
             e,
         )
-
-
-# ============================================================
-# GET FILE INFORMATION
-# ============================================================
-
-def get_message_file(message: Message):
-
-    if message.document:
-        return (
-            message.document.file_name
-            or f"document_{message.id}",
-            message.document.file_size or 0,
-        )
-
-    if message.video:
-        return (
-            message.video.file_name
-            or f"video_{message.id}.mp4",
-            message.video.file_size or 0,
-        )
-
-    if message.audio:
-        return (
-            message.audio.file_name
-            or f"audio_{message.id}",
-            message.audio.file_size or 0,
-        )
-
-    return (
-        f"file_{message.id}",
-        0,
-    )
 
 
 # ============================================================
@@ -92,36 +191,43 @@ def get_message_file(message: Message):
 # ============================================================
 
 async def download_file(
+    client: Client,
     message: Message,
-    destination: str,
+    status_message: Message,
 ):
 
+    start_time = time.time()
+
     LOGGER.info(
-        "Downloading file: %s",
-        destination,
+        "Downloading file from user %s",
+        message.from_user.id,
     )
 
-    downloaded = await message.download(
-        file_name=destination
+    path = await message.download(
+        file_name=str(
+            DOWNLOAD_DIR
+        ),
+        progress=progress_callback,
+        progress_args=(
+            status_message,
+            start_time,
+            "Downloading",
+        ),
     )
 
-    if not downloaded:
+    if not path:
 
         raise RuntimeError(
-            "Telegram returned an empty download path."
+            "Telegram download returned no path."
         )
 
-    downloaded_path = Path(
-        downloaded
-    )
-
-    if not downloaded_path.exists():
+    if not os.path.exists(path):
 
         raise FileNotFoundError(
-            f"Downloaded file does not exist: {downloaded}"
+            f"Downloaded file not found: {path}"
         )
 
-    if downloaded_path.stat().st_size == 0:
+    if os.path.getsize(path) <= 0:
 
         raise RuntimeError(
             "Downloaded file is empty."
@@ -129,10 +235,202 @@ async def download_file(
 
     LOGGER.info(
         "Download complete: %s",
-        downloaded_path,
+        path,
     )
 
-    return str(downloaded_path)
+    return path
+
+
+# ============================================================
+# ORIGINAL FILE NAME
+# ============================================================
+
+def get_original_filename(
+    message: Message,
+    downloaded_path: str,
+) -> str:
+
+    filename = os.path.basename(
+        downloaded_path
+    )
+
+    if message.document:
+
+        filename = (
+            message.document.file_name
+            or filename
+        )
+
+    elif message.video:
+
+        filename = (
+            message.video.file_name
+            or filename
+        )
+
+    elif message.audio:
+
+        filename = (
+            message.audio.file_name
+            or filename
+        )
+
+    return filename
+
+
+# ============================================================
+# SEND RESULT
+# ============================================================
+
+async def send_result(
+    client: Client,
+    message: Message,
+    file_path: str,
+    caption: str | None,
+    thumbnail: str | None,
+):
+
+    if not os.path.exists(file_path):
+
+        raise FileNotFoundError(
+            f"File to send does not exist: {file_path}"
+        )
+
+    extension = Path(
+        file_path
+    ).suffix.lower()
+
+    video_extensions = {
+        ".mp4",
+        ".mkv",
+        ".webm",
+        ".avi",
+        ".mov",
+        ".flv",
+        ".m4v",
+    }
+
+    audio_extensions = {
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".flac",
+        ".wav",
+        ".ogg",
+    }
+
+    # --------------------------------------------------------
+    # VALIDATE THUMBNAIL
+    # --------------------------------------------------------
+
+    valid_thumbnail = None
+
+    if thumbnail:
+
+        thumbnail_path = Path(
+            thumbnail
+        )
+
+        if thumbnail_path.exists():
+
+            valid_thumbnail = str(
+                thumbnail_path
+            )
+
+        else:
+
+            LOGGER.warning(
+                "Thumbnail not found: %s",
+                thumbnail,
+            )
+
+    # --------------------------------------------------------
+    # VIDEO
+    # --------------------------------------------------------
+
+    if extension in video_extensions:
+
+        LOGGER.info(
+            "Sending video: %s",
+            file_path,
+        )
+
+        await client.send_video(
+            chat_id=message.chat.id,
+            video=file_path,
+            caption=caption,
+            thumb=valid_thumbnail,
+            supports_streaming=True,
+        )
+
+    # --------------------------------------------------------
+    # AUDIO
+    # --------------------------------------------------------
+
+    elif extension in audio_extensions:
+
+        LOGGER.info(
+            "Sending audio: %s",
+            file_path,
+        )
+
+        await client.send_audio(
+            chat_id=message.chat.id,
+            audio=file_path,
+            caption=caption,
+        )
+
+    # --------------------------------------------------------
+    # DOCUMENT
+    # PDF / ZIP / RAR / APK / TXT / ETC.
+    # --------------------------------------------------------
+
+    else:
+
+        LOGGER.info(
+            "Sending document: %s",
+            file_path,
+        )
+
+        await client.send_document(
+            chat_id=message.chat.id,
+            document=file_path,
+            caption=caption,
+            thumb=valid_thumbnail,
+        )
+
+
+# ============================================================
+# DELETE LOCAL FILE
+# ============================================================
+
+async def delete_local_file(
+    file_path: str | None,
+):
+
+    if not file_path:
+        return
+
+    try:
+
+        if os.path.exists(file_path):
+
+            os.remove(
+                file_path
+            )
+
+            LOGGER.info(
+                "Deleted temporary file: %s",
+                file_path,
+            )
+
+    except Exception as e:
+
+        LOGGER.warning(
+            "Could not delete %s: %s",
+            file_path,
+            e,
+        )
 
 
 # ============================================================
@@ -140,88 +438,168 @@ async def download_file(
 # ============================================================
 
 async def process_file(
-    client,
+    client: Client,
     message: Message,
-    status_message=None,
+    status_message: Message,
 ):
 
     user_id = message.from_user.id
 
-    original_path = None
+    downloaded_path = None
     renamed_path = None
+    record_id = None
 
     try:
-
-        # ----------------------------------------------------
-        # FILE INFO
-        # ----------------------------------------------------
-
-        original_name, file_size = get_message_file(
-            message
-        )
-
-        LOGGER.info(
-            "Processing user=%s file=%s size=%s",
-            user_id,
-            original_name,
-            file_size,
-        )
-
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
-
-        if status_message:
-
-            try:
-
-                await status_message.edit_text(
-                    "📥 <b>Downloading file...</b>\n\n"
-                    f"📄 <code>{original_name}</code>"
-                )
-
-            except Exception:
-                pass
-
-        # ----------------------------------------------------
-        # UNIQUE TEMP NAME
-        # ----------------------------------------------------
-
-        timestamp = int(
-            time.time() * 1000
-        )
-
-        safe_name = (
-            original_name
-            .replace("/", "_")
-            .replace("\\", "_")
-            .replace(":", "_")
-        )
-
-        temp_name = (
-            f"{user_id}_{timestamp}_{safe_name}"
-        )
-
-        original_path = str(
-            DOWNLOAD_DIR / temp_name
-        )
 
         # ----------------------------------------------------
         # DOWNLOAD
         # ----------------------------------------------------
 
-        original_path = await download_file(
+        downloaded_path = await download_file(
+            client,
             message,
-            original_path
+            status_message,
         )
 
         # ----------------------------------------------------
-        # GET USER SETTINGS
+        # DATABASE TEMP RECORD
         # ----------------------------------------------------
 
-        rename_format = await get_format(
-            user_id
+        record_id = await add_temporary_file(
+            user_id=user_id,
+            file_path=downloaded_path,
+            seconds=300,
         )
+
+        # ----------------------------------------------------
+        # ORIGINAL NAME
+        # ----------------------------------------------------
+
+        original_name = get_original_filename(
+            message,
+            downloaded_path,
+        )
+
+        LOGGER.info(
+            "Original filename: %s",
+            original_name,
+        )
+
+        # ----------------------------------------------------
+        # RENAME
+        #
+        # IMPORTANT:
+        # Current rename.py expects:
+        # rename_file(user_id, original_filename)
+        #
+        # It returns the new filename.
+        # ----------------------------------------------------
+
+        await safe_edit(
+            status_message,
+            "🦋 <b>Processing file...</b>\n\n"
+            "🔄 Detecting episode and quality...",
+        )
+
+        new_name = await rename_file(
+            user_id,
+            original_name,
+        )
+
+        if not new_name:
+
+            raise RuntimeError(
+                "Rename function returned an empty filename."
+            )
+
+        # ----------------------------------------------------
+        # SANITY CHECK
+        # ----------------------------------------------------
+
+        new_name = os.path.basename(
+            new_name
+        )
+
+        if not new_name:
+
+            raise RuntimeError(
+                "Invalid renamed filename."
+            )
+
+        LOGGER.info(
+            "Rename result: %s -> %s",
+            original_name,
+            new_name,
+        )
+
+        # ----------------------------------------------------
+        # CREATE NEW PATH
+        # ----------------------------------------------------
+
+        renamed_path = str(
+            DOWNLOAD_DIR / new_name
+        )
+
+        # ----------------------------------------------------
+        # DON'T OVERWRITE EXISTING FILE
+        # ----------------------------------------------------
+
+        if os.path.abspath(
+            renamed_path
+        ) != os.path.abspath(
+            downloaded_path
+        ):
+
+            base, extension = os.path.splitext(
+                renamed_path
+            )
+
+            counter = 1
+
+            while os.path.exists(
+                renamed_path
+            ):
+
+                renamed_path = (
+                    f"{base}_{counter}{extension}"
+                )
+
+                counter += 1
+
+            os.rename(
+                downloaded_path,
+                renamed_path,
+            )
+
+            downloaded_path = renamed_path
+
+        else:
+
+            renamed_path = downloaded_path
+
+        # ----------------------------------------------------
+        # VERIFY RENAMED FILE
+        # ----------------------------------------------------
+
+        if not os.path.exists(
+            renamed_path
+        ):
+
+            raise FileNotFoundError(
+                "Renamed file was not created."
+            )
+
+        if os.path.getsize(
+            renamed_path
+        ) <= 0:
+
+            raise RuntimeError(
+                "Renamed file is empty."
+            )
+
+        # ----------------------------------------------------
+        # USER SETTINGS
+        # ----------------------------------------------------
 
         thumbnail = await get_thumbnail(
             user_id
@@ -232,250 +610,150 @@ async def process_file(
         )
 
         # ----------------------------------------------------
-        # RENAME
-        # ----------------------------------------------------
-
-        if status_message:
-
-            try:
-
-                await status_message.edit_text(
-                    "⚙️ <b>Processing file...</b>\n\n"
-                    "🔄 Applying rename format..."
-                )
-
-            except Exception:
-                pass
-
-        LOGGER.info(
-            "Rename format for user %s: %s",
-            user_id,
-            rename_format,
-        )
-
-        renamed_path = await rename_file(
-            original_path,
-            rename_format,
-        )
-
-        # ----------------------------------------------------
-        # VALIDATE RENAMED FILE
-        # ----------------------------------------------------
-
-        if not renamed_path:
-
-            raise RuntimeError(
-                "rename_file() returned no file."
-            )
-
-        renamed_path = str(
-            renamed_path
-        )
-
-        renamed_file = Path(
-            renamed_path
-        )
-
-        if not renamed_file.exists():
-
-            raise FileNotFoundError(
-                f"Renamed file does not exist: {renamed_path}"
-            )
-
-        if renamed_file.stat().st_size == 0:
-
-            raise RuntimeError(
-                "Renamed file is empty."
-            )
-
-        LOGGER.info(
-            "Renamed file ready: %s",
-            renamed_path,
-        )
-
-        # ----------------------------------------------------
-        # FINAL FILENAME
-        # ----------------------------------------------------
-
-        final_filename = renamed_file.name
-
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
-
-        if status_message:
-
-            try:
-
-                await status_message.edit_text(
-                    "📤 <b>Uploading...</b>\n\n"
-                    f"📄 <code>{final_filename}</code>"
-                )
-
-            except Exception:
-                pass
-
-        # ----------------------------------------------------
-        # CAPTION
+        # DEFAULT CAPTION
         # ----------------------------------------------------
 
         if not caption:
 
             caption = (
-                f"📄 <b>{final_filename}</b>"
+                f"📄 <b>{os.path.basename(renamed_path)}</b>"
             )
 
         # ----------------------------------------------------
-        # THUMBNAIL VALIDATION
+        # UPLOAD
         # ----------------------------------------------------
 
-        valid_thumbnail = None
+        await safe_edit(
+            status_message,
+            "🚀 <b>Uploading...</b>\n\n"
+            f"📄 <code>{os.path.basename(renamed_path)}</code>",
+        )
 
-        if thumbnail:
-
-            thumbnail_path = Path(
-                thumbnail
-            )
-
-            if thumbnail_path.exists():
-
-                valid_thumbnail = str(
-                    thumbnail_path
-                )
-
-            else:
-
-                LOGGER.warning(
-                    "Thumbnail does not exist: %s",
-                    thumbnail
-                )
-
-        # ----------------------------------------------------
-        # SEND FILE
-        # ----------------------------------------------------
-
-        sent_message = None
-
-        # VIDEO
-        if message.video:
-
-            sent_message = await client.send_video(
-                chat_id=message.chat.id,
-                video=renamed_path,
-                caption=caption,
-                thumb=valid_thumbnail,
-                supports_streaming=True,
-                parse_mode=enums.ParseMode.HTML,
-            )
-
-        # AUDIO
-        elif message.audio:
-
-            sent_message = await client.send_audio(
-                chat_id=message.chat.id,
-                audio=renamed_path,
-                caption=caption,
-                thumb=valid_thumbnail,
-                parse_mode=enums.ParseMode.HTML,
-            )
-
-        # DOCUMENT / PDF / ZIP / APK / ETC.
-        else:
-
-            sent_message = await client.send_document(
-                chat_id=message.chat.id,
-                document=renamed_path,
-                thumb=valid_thumbnail,
-                caption=caption,
-                parse_mode=enums.ParseMode.HTML,
-                force_document=True,
-            )
-
-        # ----------------------------------------------------
-        # VERIFY SEND
-        # ----------------------------------------------------
-
-        if not sent_message:
-
-            raise RuntimeError(
-                "Telegram did not return the sent message."
-            )
-
-        LOGGER.info(
-            "File successfully sent: %s",
-            final_filename,
+        await send_result(
+            client,
+            message,
+            renamed_path,
+            caption,
+            thumbnail,
         )
 
         # ----------------------------------------------------
-        # DELETE STATUS MESSAGE
+        # SUCCESS
         # ----------------------------------------------------
 
-        if status_message:
+        LOGGER.info(
+            "File sent successfully: %s",
+            renamed_path,
+        )
+
+        await safe_edit(
+            status_message,
+            "✅ <b>File sent successfully!</b>\n\n"
+            "🗑️ Cleaning temporary files...",
+        )
+
+        # ----------------------------------------------------
+        # DELETE DB RECORD
+        # ----------------------------------------------------
+
+        if record_id:
 
             try:
-                await status_message.delete()
 
-            except Exception:
-                pass
+                await delete_temporary_file(
+                    record_id
+                )
 
-        return sent_message
+            except Exception as e:
 
-    # ========================================================
-    # ERRORS
-    # ========================================================
+                LOGGER.warning(
+                    "Database cleanup failed: %s",
+                    e,
+                )
+
+        # ----------------------------------------------------
+        # SHORT DELAY
+        # ----------------------------------------------------
+
+        await asyncio.sleep(
+            CLEANUP_DELAY
+        )
+
+        # ----------------------------------------------------
+        # REMOVE STATUS MESSAGE
+        # ----------------------------------------------------
+
+        try:
+
+            await status_message.delete()
+
+        except Exception:
+
+            pass
 
     except Exception as e:
 
         LOGGER.exception(
-            "Media processing failed: %s",
+            "File processing failed: %s",
             e,
         )
 
-        if status_message:
+        try:
 
-            try:
+            await status_message.edit_text(
+                "❌ <b>File processing failed.</b>\n\n"
+                f"<code>{str(e)[:1000]}</code>"
+            )
 
-                await status_message.edit_text(
-                    "❌ <b>File processing failed.</b>\n\n"
-                    f"<code>{str(e)[:1000]}</code>"
-                )
+        except Exception:
 
-            except Exception:
-                pass
-
-        return None
-
-    # ========================================================
-    # CLEANUP
-    # ========================================================
+            pass
 
     finally:
 
-        # Never leave downloaded/renamed files behind.
-        if original_path:
-            safe_delete(
-                original_path
-            )
+        # ====================================================
+        # ALWAYS CLEAN LOCAL FILES
+        # ====================================================
 
-        if (
-            renamed_path
-            and renamed_path != original_path
-        ):
-            safe_delete(
-                renamed_path
-            )
+        files_to_delete = {
+            downloaded_path,
+            renamed_path,
+        }
 
-        LOGGER.info(
-            "Temporary files cleaned."
-        )
+        for file_path in files_to_delete:
+
+            if file_path:
+
+                await delete_local_file(
+                    file_path
+                )
+
+        # ====================================================
+        # ALWAYS CLEAN DATABASE RECORD
+        # ====================================================
+
+        if record_id:
+
+            try:
+
+                await delete_temporary_file(
+                    record_id
+                )
+
+            except Exception as e:
+
+                LOGGER.warning(
+                    "Final DB cleanup failed: %s",
+                    e,
+                )
 
 
 # ============================================================
-# CLEAN OLD DOWNLOADS
+# OLD FILE CLEANUP WORKER
 # ============================================================
 
 async def cleanup_old_files(
-    max_age=300
+    max_age: int = 600,
 ):
 
     while True:
@@ -498,23 +776,19 @@ async def cleanup_old_files(
 
                     if age > max_age:
 
-                        safe_delete(
+                        await delete_local_file(
                             str(file)
                         )
 
-                        LOGGER.info(
-                            "Old file removed: %s",
-                            file
-                        )
-
                 except Exception:
+
                     continue
 
         except Exception as e:
 
             LOGGER.warning(
                 "Cleanup worker error: %s",
-                e
+                e,
             )
 
         await asyncio.sleep(
