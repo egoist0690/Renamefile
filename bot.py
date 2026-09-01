@@ -1,6 +1,12 @@
+# bot.py
+# ============================================================
+# EGOIST6969 - ADVANCED TELEGRAM RENAME BOT
+# Rename + Thumbnail + Caption + Upscale + Enhance
+# ============================================================
+
 import asyncio
 import logging
-import os
+from pathlib import Path
 
 from pyrogram import Client, filters, idle
 from pyrogram.errors import RPCError
@@ -31,22 +37,35 @@ from enhance import enhance_image
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
-LOGGER = logging.getLogger("RenameFileBot")
+LOGGER = logging.getLogger("EGOIST6969")
 
 
 # ============================================================
-# BOT
+# DIRECTORIES
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+DOWNLOAD_DIR = BASE_DIR / "downloads"
+
+DOWNLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+# ============================================================
+# PYROGRAM CLIENT
 # ============================================================
 
 app = Client(
-    "rename_file_bot",
+    "egoist_rename_bot",
     api_id=int(Config.API_ID),
     api_hash=Config.API_HASH,
     bot_token=Config.BOT_TOKEN,
-    workers=20
+    workers=20,
 )
 
 
@@ -57,16 +76,28 @@ app = Client(
 @app.on_message(filters.command("start"))
 async def start_handler(client, message):
 
-    user = message.from_user
+    try:
+        user = message.from_user
 
-    name = user.first_name if user else "User"
+        if not user:
+            return
 
-    await get_user(message.from_user.id)
+        await get_user(user.id)
 
-    await message.reply_text(
-        Txt.START_TXT.format(name),
-        disable_web_page_preview=True
-    )
+        name = user.first_name or "User"
+
+        await message.reply_text(
+            Txt.START_TXT.format(name),
+            disable_web_page_preview=True,
+        )
+
+    except Exception as e:
+
+        LOGGER.exception("Start error: %s", e)
+
+        await message.reply_text(
+            "❌ Something went wrong while starting the bot."
+        )
 
 
 # ============================================================
@@ -77,37 +108,39 @@ async def start_handler(client, message):
 async def help_handler(client, message):
 
     await message.reply_text(
-        f"""
-<b>🦋 SHINOBU RENAME BOT</b>
+        """
+<b>🦋 EGOIST6969 RENAME BOT</b>
 
 <b>📁 FILE</b>
-• Send any document/video/audio
-• Bot automatically renames it
+Send me a document, video or audio and I will process it.
 
 <b>📝 RENAME</b>
-/autorename <code>your format</code>
+<code>/autorename Your Name episode quality</code>
 
 <b>🖼 THUMBNAIL</b>
-/setthumb
-/viewthumb
-/delthumb
+<code>/setthumb</code>
+<code>/viewthumb</code>
+<code>/delthumb</code>
 
 <b>✏️ CAPTION</b>
-/set_caption
-/see_caption
-/del_caption
+<code>/set_caption Your caption</code>
+<code>/see_caption</code>
+<code>/del_caption</code>
 
 <b>✨ IMAGE TOOLS</b>
-/upscale
-/enhance
+Reply to an image:
+<code>/upscale</code>
+<code>/enhance</code>
 
 <b>ℹ️ OTHER</b>
-/about
-/ping
+<code>/about</code>
+<code>/ping</code>
 
-<b>💜 Developer:</b> @EGOIST6969
+━━━━━━━━━━━━━━━━━━
+
+<b>🦋 Developer:</b> @EGOIST6969
 """,
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
 
@@ -120,7 +153,7 @@ async def about_handler(client, message):
 
     await message.reply_text(
         Txt.ABOUT_TXT,
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
 
@@ -132,54 +165,70 @@ async def about_handler(client, message):
 async def ping_handler(client, message):
 
     await message.reply_text(
-        "🏓 <b>Pong!</b>\n\n"
+        "🏓 <b>PONG!</b>\n\n"
         "🟢 Bot is online."
     )
 
 
 # ============================================================
-# AUTO RENAME FORMAT
+# AUTORENAME
 # ============================================================
 
 @app.on_message(filters.command("autorename"))
 async def autorename_handler(client, message):
 
-    user_id = message.from_user.id
+    try:
 
-    if len(message.command) < 2:
+        user_id = message.from_user.id
 
-        current = await get_format(user_id)
+        await get_user(user_id)
 
-        await message.reply_text(
-            Txt.FILE_NAME_TXT.format(
-                format_template=current
+        # No argument → show current format
+        if len(message.command) == 1:
+
+            current = await get_format(user_id)
+
+            await message.reply_text(
+                Txt.FILE_NAME_TXT.format(
+                    format_template=current
+                )
             )
+
+            return
+
+        new_format = message.text.split(
+            None,
+            1
+        )[1].strip()
+
+        if not new_format:
+
+            await message.reply_text(
+                "❌ Please enter a rename format."
+            )
+
+            return
+
+        await set_format(
+            user_id,
+            new_format
         )
-
-        return
-
-    new_format = message.text.split(
-        None,
-        1
-    )[1].strip()
-
-    if not new_format:
 
         await message.reply_text(
-            "❌ Please provide a rename format."
+            "✅ <b>Auto rename format updated!</b>\n\n"
+            f"📝 <code>{new_format}</code>"
         )
 
-        return
+    except Exception as e:
 
-    await set_format(
-        user_id,
-        new_format
-    )
+        LOGGER.exception(
+            "Autorename error: %s",
+            e
+        )
 
-    await message.reply_text(
-        "✅ <b>Auto rename format updated!</b>\n\n"
-        f"<code>{new_format}</code>"
-    )
+        await message.reply_text(
+            "❌ Failed to update rename format."
+        )
 
 
 # ============================================================
@@ -189,49 +238,93 @@ async def autorename_handler(client, message):
 @app.on_message(filters.command("setthumb"))
 async def setthumb_handler(client, message):
 
-    reply = message.reply_to_message
-
-    if not reply or not reply.photo:
-
-        await message.reply_text(
-            "🖼️ <b>Reply to a photo with /setthumb</b>"
-        )
-
-        return
-
-    user_id = message.from_user.id
-
-    os.makedirs("downloads", exist_ok=True)
-
-    status = await message.reply_text(
-        "📥 Downloading thumbnail..."
-    )
+    status = None
 
     try:
 
-        path = await reply.download(
-            file_name=f"downloads/thumb_{user_id}.jpg"
+        reply = message.reply_to_message
+
+        if not reply or not reply.photo:
+
+            await message.reply_text(
+                "🖼️ <b>How to use:</b>\n\n"
+                "1. Send a photo\n"
+                "2. Reply to that photo\n"
+                "3. Send <code>/setthumb</code>"
+            )
+
+            return
+
+        user_id = message.from_user.id
+
+        status = await message.reply_text(
+            "📥 <b>Downloading thumbnail...</b>"
         )
+
+        DOWNLOAD_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        thumbnail_path = await reply.download(
+            file_name=str(
+                DOWNLOAD_DIR /
+                f"thumb_{user_id}.jpg"
+            )
+        )
+
+        if not thumbnail_path:
+
+            raise RuntimeError(
+                "Thumbnail download failed."
+            )
+
+        # Delete old thumbnail if present
+        old_thumbnail = await get_thumbnail(
+            user_id
+        )
+
+        if (
+            old_thumbnail
+            and old_thumbnail != thumbnail_path
+        ):
+            old_path = Path(old_thumbnail)
+
+            if old_path.exists():
+
+                try:
+                    old_path.unlink()
+
+                except Exception:
+                    pass
 
         await set_thumbnail(
             user_id,
-            path
+            thumbnail_path
         )
 
         await status.edit_text(
             "✅ <b>Thumbnail saved successfully!</b>"
         )
 
-    except Exception as error:
+    except Exception as e:
 
         LOGGER.exception(
-            "Thumbnail error: %s",
-            error
+            "Set thumbnail error: %s",
+            e
         )
 
-        await status.edit_text(
-            "❌ Failed to save thumbnail."
-        )
+        if status:
+
+            try:
+
+                await status.edit_text(
+                    "❌ <b>Failed to save thumbnail.</b>\n\n"
+                    f"<code>{str(e)[:500]}</code>"
+                )
+
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -241,36 +334,50 @@ async def setthumb_handler(client, message):
 @app.on_message(filters.command("viewthumb"))
 async def viewthumb_handler(client, message):
 
-    user_id = message.from_user.id
-
-    thumbnail = await get_thumbnail(
-        user_id
-    )
-
-    if not thumbnail or not os.path.exists(thumbnail):
-
-        await message.reply_text(
-            "❌ You don't have a thumbnail set."
-        )
-
-        return
-
     try:
 
-        await message.reply_photo(
-            thumbnail,
-            caption="🖼️ <b>Your current thumbnail</b>"
+        user_id = message.from_user.id
+
+        thumbnail = await get_thumbnail(
+            user_id
         )
 
-    except Exception as error:
+        if not thumbnail:
+
+            await message.reply_text(
+                "❌ You don't have a thumbnail set."
+            )
+
+            return
+
+        thumbnail_path = Path(thumbnail)
+
+        if not thumbnail_path.exists():
+
+            await delete_thumbnail(
+                user_id
+            )
+
+            await message.reply_text(
+                "❌ Your saved thumbnail is no longer available."
+            )
+
+            return
+
+        await message.reply_photo(
+            photo=str(thumbnail_path),
+            caption="🖼️ <b>Your current thumbnail</b>",
+        )
+
+    except Exception as e:
 
         LOGGER.exception(
             "View thumbnail error: %s",
-            error
+            e
         )
 
         await message.reply_text(
-            "❌ Unable to send your thumbnail."
+            "❌ Failed to show thumbnail."
         )
 
 
@@ -281,26 +388,46 @@ async def viewthumb_handler(client, message):
 @app.on_message(filters.command("delthumb"))
 async def delthumb_handler(client, message):
 
-    user_id = message.from_user.id
+    try:
 
-    thumbnail = await get_thumbnail(
-        user_id
-    )
+        user_id = message.from_user.id
 
-    await delete_thumbnail(
-        user_id
-    )
+        thumbnail = await get_thumbnail(
+            user_id
+        )
 
-    if thumbnail and os.path.exists(thumbnail):
+        await delete_thumbnail(
+            user_id
+        )
 
-        try:
-            os.remove(thumbnail)
-        except Exception:
-            pass
+        if thumbnail:
 
-    await message.reply_text(
-        "🗑️ <b>Thumbnail deleted.</b>"
-    )
+            thumbnail_path = Path(
+                thumbnail
+            )
+
+            if thumbnail_path.exists():
+
+                try:
+                    thumbnail_path.unlink()
+
+                except Exception:
+                    pass
+
+        await message.reply_text(
+            "🗑️ <b>Thumbnail deleted successfully.</b>"
+        )
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "Delete thumbnail error: %s",
+            e
+        )
+
+        await message.reply_text(
+            "❌ Failed to delete thumbnail."
+        )
 
 
 # ============================================================
@@ -310,31 +437,44 @@ async def delthumb_handler(client, message):
 @app.on_message(filters.command("set_caption"))
 async def setcaption_handler(client, message):
 
-    user_id = message.from_user.id
+    try:
 
-    if len(message.command) < 2:
+        user_id = message.from_user.id
 
-        await message.reply_text(
-            "✏️ Usage:\n\n"
-            "<code>/set_caption Your caption here</code>"
+        if len(message.command) == 1:
+
+            await message.reply_text(
+                "📝 <b>Usage:</b>\n\n"
+                "<code>/set_caption Your caption here</code>"
+            )
+
+            return
+
+        caption = message.text.split(
+            None,
+            1
+        )[1].strip()
+
+        await set_caption(
+            user_id,
+            caption
         )
 
-        return
+        await message.reply_text(
+            "✅ <b>Caption saved!</b>\n\n"
+            f"{caption}"
+        )
 
-    caption = message.text.split(
-        None,
-        1
-    )[1].strip()
+    except Exception as e:
 
-    await set_caption(
-        user_id,
-        caption
-    )
+        LOGGER.exception(
+            "Set caption error: %s",
+            e
+        )
 
-    await message.reply_text(
-        "✅ <b>Caption saved!</b>\n\n"
-        f"{caption}"
-    )
+        await message.reply_text(
+            "❌ Failed to save caption."
+        )
 
 
 # ============================================================
@@ -344,24 +484,37 @@ async def setcaption_handler(client, message):
 @app.on_message(filters.command("see_caption"))
 async def seecaption_handler(client, message):
 
-    user_id = message.from_user.id
+    try:
 
-    caption = await get_caption(
-        user_id
-    )
+        user_id = message.from_user.id
 
-    if not caption:
-
-        await message.reply_text(
-            "❌ No custom caption is set."
+        caption = await get_caption(
+            user_id
         )
 
-        return
+        if not caption:
 
-    await message.reply_text(
-        "📝 <b>Your current caption:</b>\n\n"
-        f"{caption}"
-    )
+            await message.reply_text(
+                "❌ No custom caption is currently set."
+            )
+
+            return
+
+        await message.reply_text(
+            "📝 <b>Your current caption:</b>\n\n"
+            f"{caption}"
+        )
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "See caption error: %s",
+            e
+        )
+
+        await message.reply_text(
+            "❌ Failed to get caption."
+        )
 
 
 # ============================================================
@@ -371,15 +524,28 @@ async def seecaption_handler(client, message):
 @app.on_message(filters.command("del_caption"))
 async def delcaption_handler(client, message):
 
-    user_id = message.from_user.id
+    try:
 
-    await delete_caption(
-        user_id
-    )
+        user_id = message.from_user.id
 
-    await message.reply_text(
-        "🗑️ <b>Caption deleted.</b>"
-    )
+        await delete_caption(
+            user_id
+        )
+
+        await message.reply_text(
+            "🗑️ <b>Caption deleted successfully.</b>"
+        )
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "Delete caption error: %s",
+            e
+        )
+
+        await message.reply_text(
+            "❌ Failed to delete caption."
+        )
 
 
 # ============================================================
@@ -402,11 +568,24 @@ async def upscale_handler(client, message):
 
         return
 
-    await upscale_image(
-        client,
-        message,
-        reply
-    )
+    try:
+
+        await upscale_image(
+            client,
+            message,
+            reply
+        )
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "Upscale handler error: %s",
+            e
+        )
+
+        await message.reply_text(
+            "❌ Upscale failed."
+        )
 
 
 # ============================================================
@@ -429,15 +608,28 @@ async def enhance_handler(client, message):
 
         return
 
-    await enhance_image(
-        client,
-        message,
-        reply
-    )
+    try:
+
+        await enhance_image(
+            client,
+            message,
+            reply
+        )
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "Enhance handler error: %s",
+            e
+        )
+
+        await message.reply_text(
+            "❌ Enhancement failed."
+        )
 
 
 # ============================================================
-# FILE HANDLER
+# FILE PROCESSOR
 # ============================================================
 
 @app.on_message(
@@ -447,15 +639,18 @@ async def enhance_handler(client, message):
 )
 async def file_handler(client, message):
 
+    # Ignore messages generated by bots
     if message.from_user and message.from_user.is_bot:
         return
 
-    status = await message.reply_text(
-        "📥 <b>File received...</b>\n\n"
-        "Preparing your file..."
-    )
+    status = None
 
     try:
+
+        status = await message.reply_text(
+            "📥 <b>File received...</b>\n\n"
+            "Preparing your file..."
+        )
 
         await process_file(
             client,
@@ -463,34 +658,24 @@ async def file_handler(client, message):
             status
         )
 
-    except Exception as error:
+    except Exception as e:
 
         LOGGER.exception(
-            "File processing error: %s",
-            error
+            "File handler error: %s",
+            e
         )
 
-        try:
+        if status:
 
-            await status.edit_text(
-                "❌ <b>File processing failed.</b>\n\n"
-                f"<code>{error}</code>"
-            )
+            try:
 
-        except Exception:
-            pass
+                await status.edit_text(
+                    "❌ <b>File processing failed.</b>\n\n"
+                    f"<code>{str(e)[:800]}</code>"
+                )
 
-
-# ============================================================
-# PHOTO HANDLER
-# ============================================================
-
-@app.on_message(filters.photo)
-async def photo_handler(client, message):
-
-    # Photos are processed only through
-    # /upscale or /enhance.
-    return
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -499,28 +684,15 @@ async def photo_handler(client, message):
 
 async def startup():
 
-    LOGGER.info("=" * 60)
-    LOGGER.info("🦋 RenameFile Bot starting...")
-    LOGGER.info("=" * 60)
+    LOGGER.info(
+        "Starting database..."
+    )
 
-    try:
+    await start_database()
 
-        await start_database()
-
-        LOGGER.info(
-            "✅ MongoDB system started."
-        )
-
-    except Exception as error:
-
-        LOGGER.exception(
-            "❌ MongoDB startup failed: %s",
-            error
-        )
-
-        LOGGER.warning(
-            "⚠️ Continuing without database startup."
-        )
+    LOGGER.info(
+        "Database started successfully."
+    )
 
 
 # ============================================================
@@ -529,16 +701,27 @@ async def startup():
 
 async def main():
 
+    LOGGER.info("=" * 60)
+    LOGGER.info(
+        "🦋 EGOIST6969 RENAME BOT"
+    )
+    LOGGER.info(
+        "Starting..."
+    )
+    LOGGER.info("=" * 60)
+
     try:
 
-        await app.start()
-
         await startup()
+
+        await app.start()
 
         me = await app.get_me()
 
         LOGGER.info("=" * 60)
-        LOGGER.info("🟢 BOT ONLINE")
+        LOGGER.info(
+            "🟢 BOT ONLINE"
+        )
         LOGGER.info(
             "Username: @%s",
             me.username
@@ -551,18 +734,18 @@ async def main():
 
         await idle()
 
-    except RPCError as error:
+    except RPCError as e:
 
         LOGGER.exception(
-            "❌ Telegram error: %s",
-            error
+            "Telegram RPC error: %s",
+            e
         )
 
-    except Exception as error:
+    except Exception as e:
 
         LOGGER.exception(
-            "❌ Fatal bot error: %s",
-            error
+            "Fatal startup error: %s",
+            e
         )
 
     finally:
