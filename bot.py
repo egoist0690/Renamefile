@@ -1,219 +1,348 @@
-```python
+
 # bot.py
-# ============================================
-# Auto Rename + Upscale + Enhance Telegram Bot
-# Automatic Plugin / Command Loader
-# ============================================
+# ============================================================
+# 🦋 AUTO RENAME + UPSCALE + ENHANCE BOT
+# ============================================================
 
-import os
-import sys
 import asyncio
-import importlib
 import logging
-from pathlib import Path
+import os
 
-from pyrogram import Client, idle
+from pyrogram import Client, filters, idle
 from pyrogram.errors import RPCError
 
-from config import API_ID, API_HASH, BOT_TOKEN
+from config import Config
+from database import start_database
+
+# Existing modules
+from media import process_file
+from upscale import upscale_image
+from enhance import enhance_image
 
 
-# ============================================
+# ============================================================
 # LOGGING
-# ============================================
+# ============================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
 
-LOGGER = logging.getLogger("AutoRenameBot")
+LOGGER = logging.getLogger("RenameFileBot")
 
 
-# ============================================
-# DIRECTORIES
-# ============================================
-
-BASE_DIR = Path(__file__).resolve().parent
-PLUGINS_DIR = BASE_DIR / "plugins"
-
-
-# Create plugins folder automatically
-PLUGINS_DIR.mkdir(exist_ok=True)
-
-# Make sure Python can find the plugins
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
-
-
-# ============================================
-# BOT
-# ============================================
+# ============================================================
+# BOT CLIENT
+# ============================================================
 
 app = Client(
-    "auto_rename_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=20,
+    "rename_file_bot",
+
+    api_id=int(Config.API_ID),
+    api_hash=Config.API_HASH,
+    bot_token=Config.BOT_TOKEN,
+
+    workers=20
 )
 
 
-# ============================================
-# PLUGIN LOADER
-# ============================================
+# ============================================================
+# COMMAND REGISTRATION
+# ============================================================
 
-loaded_plugins = []
-
-
-def load_plugins():
+@app.on_message(
+    filters.command("upscale") &
+    filters.private
+)
+async def upscale_command(client, message):
     """
-    Automatically load every Python file inside
-    the plugins folder.
+    /upscale
 
-    Example:
-
-        plugins/
-        ├── rename.py
-        ├── upscale.py
-        ├── enhance.py
-        ├── start.py
-        └── newcommand.py
-
-    Adding a new .py file automatically loads it.
+    Usage:
+    Reply to an image with /upscale
     """
 
-    LOGGER.info("Loading plugins...")
+    reply = message.reply_to_message
 
-    for file in sorted(PLUGINS_DIR.glob("*.py")):
+    if not reply:
+        await message.reply_text(
+            "🖼️ <b>Reply to an image with /upscale</b>"
+        )
+        return
 
-        # Ignore __init__.py
-        if file.name.startswith("_"):
-            continue
-
-        module_name = f"plugins.{file.stem}"
-
-        try:
-            importlib.import_module(module_name)
-
-            loaded_plugins.append(file.stem)
-
-            LOGGER.info(
-                "Plugin loaded successfully: %s",
-                file.stem
-            )
-
-        except Exception as error:
-
-            LOGGER.exception(
-                "Failed to load plugin %s: %s",
-                file.name,
-                error
-            )
+    await upscale_image(
+        client,
+        message,
+        reply
+    )
 
 
-# ============================================
-# PLUGIN STATUS
-# ============================================
+# ============================================================
 
-def plugin_count():
-    return len(loaded_plugins)
-
-
-def plugin_list():
-    return loaded_plugins
-
-
-# ============================================
-# STARTUP MESSAGE
-# ============================================
-
-async def startup_message():
+@app.on_message(
+    filters.command("enhance") &
+    filters.private
+)
+async def enhance_command(client, message):
     """
-    Prints bot information when starting.
+    /enhance
+
+    Usage:
+    Reply to an image with /enhance
     """
 
-    LOGGER.info("=" * 50)
-    LOGGER.info("AUTO RENAME BOT STARTED")
-    LOGGER.info("Loaded Plugins: %s", plugin_count())
+    reply = message.reply_to_message
 
-    if loaded_plugins:
+    if not reply:
+        await message.reply_text(
+            "✨ <b>Reply to an image with /enhance</b>"
+        )
+        return
+
+    await enhance_image(
+        client,
+        message,
+        reply
+    )
+
+
+# ============================================================
+# FILE HANDLER
+# ============================================================
+
+@app.on_message(
+    filters.document |
+    filters.video |
+    filters.audio
+)
+async def file_handler(client, message):
+    """
+    Automatically processes supported files.
+
+    Files are:
+        Downloaded
+        Renamed
+        Uploaded
+        Deleted
+    """
+
+    # Ignore bot messages
+    if message.from_user and message.from_user.is_bot:
+        return
+
+    status = await message.reply_text(
+        "📥 <b>File received...</b>\n\n"
+        "Preparing your file..."
+    )
+
+    await process_file(
+        client,
+        message,
+        status
+    )
+
+
+# ============================================================
+# PHOTO HANDLER
+# ============================================================
+
+@app.on_message(
+    filters.photo
+)
+async def photo_handler(client, message):
+    """
+    Photos are not automatically renamed.
+    They are handled by /upscale and /enhance.
+    """
+
+    return
+
+
+# ============================================================
+# START COMMAND
+# ============================================================
+
+@app.on_message(
+    filters.command("start")
+)
+async def start_command(client, message):
+
+    user = message.from_user
+
+    name = (
+        user.first_name
+        if user
+        else "User"
+    )
+
+    await message.reply_text(
+        f"🦋 <b>Hello {name}!</b>\n\n"
+
+        "Welcome to <b>RenameFile Bot</b>.\n\n"
+
+        "📁 <b>File Renaming</b>\n"
+        "Send a document, video or audio file "
+        "and I'll rename it automatically.\n\n"
+
+        "🖼️ <b>Image Tools</b>\n"
+        "• /upscale — Upscale image 2×\n"
+        "• /enhance — Enhance image quality\n\n"
+
+        "⚙️ <b>Rename Settings</b>\n"
+        "Use the available rename settings "
+        "commands to customize your files.\n\n"
+
+        "🦋 <b>Powered by @EGOIST6969</b>"
+    )
+
+
+# ============================================================
+# HELP COMMAND
+# ============================================================
+
+@app.on_message(
+    filters.command("help")
+)
+async def help_command(client, message):
+
+    await message.reply_text(
+        "🦋 <b>RenameFile Bot Help</b>\n\n"
+
+        "📁 <b>Files</b>\n"
+        "Send a document/video/audio and "
+        "the bot will process it automatically.\n\n"
+
+        "🖼️ <b>Image Commands</b>\n"
+        "/upscale — Upscale an image 2×\n"
+        "/enhance — Enhance image quality\n\n"
+
+        "⚙️ <b>Other</b>\n"
+        "/start — Start the bot\n"
+        "/help — Show this help\n\n"
+
+        "🦋 @EGOIST6969"
+    )
+
+
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
+@app.on_message(
+    filters.command("ping")
+)
+async def ping_command(client, message):
+
+    await message.reply_text(
+        "🏓 <b>Pong!</b>\n\n"
+        "🟢 Bot is online."
+    )
+
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+async def startup():
+
+    LOGGER.info("=" * 60)
+    LOGGER.info("🦋 RenameFile Bot starting...")
+    LOGGER.info("=" * 60)
+
+    # Start MongoDB system
+    try:
+
+        await start_database()
+
         LOGGER.info(
-            "Plugins: %s",
-            ", ".join(loaded_plugins)
+            "✅ MongoDB system started."
         )
 
-    LOGGER.info("=" * 50)
+    except Exception as error:
+
+        LOGGER.exception(
+            "❌ MongoDB startup failed: %s",
+            error
+        )
+
+        # Don't immediately kill the bot.
+        # Telegram functionality can still start.
+        LOGGER.warning(
+            "⚠️ Continuing without database startup."
+        )
 
 
-# ============================================
+# ============================================================
 # MAIN
-# ============================================
+# ============================================================
 
 async def main():
-
-    # Load every plugin before starting bot
-    load_plugins()
 
     try:
 
         await app.start()
 
-        await startup_message()
+        await startup()
 
         me = await app.get_me()
 
+        LOGGER.info("=" * 60)
         LOGGER.info(
-            "Bot username: @%s",
+            "🟢 BOT ONLINE"
+        )
+        LOGGER.info(
+            "Username: @%s",
             me.username
         )
-
         LOGGER.info(
             "Bot ID: %s",
             me.id
         )
+        LOGGER.info("=" * 60)
 
-        LOGGER.info("Bot is online!")
-
-        # Keep bot running
         await idle()
 
     except RPCError as error:
 
-        LOGGER.error(
-            "Telegram RPC Error: %s",
+        LOGGER.exception(
+            "❌ Telegram error: %s",
             error
         )
 
     except Exception as error:
 
         LOGGER.exception(
-            "Bot crashed: %s",
+            "❌ Fatal bot error: %s",
             error
         )
 
     finally:
 
         try:
+
             await app.stop()
 
         except Exception:
             pass
 
-        LOGGER.info("Bot stopped.")
+        LOGGER.info(
+            "🔴 Bot stopped."
+        )
 
 
-# ============================================
+# ============================================================
 # RUN
-# ============================================
+# ============================================================
 
 if __name__ == "__main__":
 
     try:
+
         asyncio.run(main())
 
     except KeyboardInterrupt:
 
-        LOGGER.info("Bot stopped manually.")
-```
-
+        LOGGER.info(
+            "Bot stopped manually."
+        )
