@@ -1,10 +1,17 @@
 
-pyrogram
-tgcrypto
-motor
-pymongo
-aiohttp
-requests
-Pillow
-python-dotenv
-hachoir
+pyrogram>=2.0.106
+tgcrypto>=1.2.5
+
+motor>=3.6.0
+pymongo>=4.9.0
+
+aiohttp>=3.10.0
+requests>=2.32.0
+
+Pillow>=10.4.0
+numpy>=2.0.0
+opencv-python-headless>=4.10.0
+
+python-dotenv>=1.0.1
+hachoir>=3.3.0
+
