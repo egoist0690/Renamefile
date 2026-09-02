@@ -1,9 +1,9 @@
-
 pyrogram>=2.0.106
 tgcrypto>=1.2.5
 
 motor>=3.6.0
 pymongo>=4.9.0
+certifi>=2024.2.2
 
 aiohttp>=3.10.0
 requests>=2.32.0
@@ -14,4 +14,3 @@ opencv-python-headless>=4.10.0
 
 python-dotenv>=1.0.1
 hachoir>=3.3.0
-
