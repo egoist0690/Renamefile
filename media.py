@@ -1,10 +1,3 @@
-# ============================================================
-# EGOIST6969 RENAME BOT
-# media.py
-#
-# Download -> Rename -> Thumbnail/Caption -> Upload -> Cleanup
-# ============================================================
-
 import asyncio
 import logging
 import os
@@ -29,6 +22,8 @@ DOWNLOAD_DIR = Path("downloads")
 CLEANUP_DELAY = 5
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Throttles progress edits to prevent Telegram FloodWait rate limits
+LAST_UPDATE_TIME = {}
 
 def human_size(size: int) -> str:
     if not size:
@@ -52,31 +47,41 @@ async def safe_edit(message, text):
 
 
 def progress_callback(current, total, status_message, start_time, action="Downloading"):
+    if not total:
+        return
+    
+    now = time.time()
+    msg_id = status_message.id
+    
+    # Throttle edits to once every 4 seconds
+    if msg_id in LAST_UPDATE_TIME and (now - LAST_UPDATE_TIME[msg_id]) < 4:
+        return
+    
+    LAST_UPDATE_TIME[msg_id] = now
+    
+    elapsed = max(now - start_time, 0.1)
+    percentage = (current * 100 / total)
+    speed = (current / elapsed)
+    remaining = (total - current)
+    eta = (remaining / speed) if speed > 0 else 0
+
+    speed_text = human_size(int(speed)) + "/s"
+    done_text = human_size(current)
+    total_text = human_size(total)
+    eta_text = f"{int(eta)}s" if eta < 60 else f"{int(eta / 60)}m"
+
+    text = (
+        f"📁 <b>{action}</b>\n\n"
+        f"<b>Progress:</b> {percentage:.1f}%\n"
+        f"📦 {done_text} / {total_text}\n"
+        f"🚀 {speed_text}\n"
+        f"⏱️ ETA: {eta_text}"
+    )
+
     try:
-        if not total:
-            return
-        now = time.time()
-        elapsed = max(now - start_time, 0.1)
-        percentage = (current * 100 / total)
-        speed = (current / elapsed)
-        remaining = (total - current)
-        eta = (remaining / speed) if speed > 0 else 0
-
-        speed_text = human_size(int(speed)) + "/s"
-        done_text = human_size(current)
-        total_text = human_size(total)
-        eta_text = f"{int(eta)}s" if eta < 60 else f"{int(eta / 60)}m"
-
-        text = (
-            f"📁 <b>{action}</b>\n\n"
-            f"▰▰▰▰▰▰▰▰▰▰\n"
-            f"<b>{percentage:.1f}%</b>\n\n"
-            f"📦 {done_text} / {total_text}\n"
-            f"🚀 {speed_text}\n"
-            f"⏱️ ETA: {eta_text}"
-        )
-
-        asyncio.create_task(safe_edit(status_message, text))
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(safe_edit(status_message, text))
     except Exception as e:
         LOGGER.debug("Progress error: %s", e)
 
@@ -84,7 +89,7 @@ def progress_callback(current, total, status_message, start_time, action="Downlo
 async def download_file(client: Client, message: Message, status_message: Message):
     start_time = time.time()
     path = await message.download(
-        file_name=str(DOWNLOAD_DIR),
+        file_name=str(DOWNLOAD_DIR) + "/",
         progress=progress_callback,
         progress_args=(status_message, start_time, "Downloading"),
     )
@@ -120,7 +125,6 @@ async def send_result(
     config = await get_user_config(user_id)
     target_channel_id = config.get("target_channel_id")
 
-    # Send to user DM and target channel if configured
     destinations = [message.chat.id]
     if target_channel_id:
         destinations.append(target_channel_id)
@@ -186,6 +190,7 @@ async def process_file(client: Client, message: Message, status_message: Message
 
         renamed_path = str(DOWNLOAD_DIR / new_name)
 
+        # Only rename if output path is different from downloaded path
         if os.path.abspath(renamed_path) != os.path.abspath(downloaded_path):
             base, extension = os.path.splitext(renamed_path)
             counter = 1
@@ -194,7 +199,8 @@ async def process_file(client: Client, message: Message, status_message: Message
                 counter += 1
 
             os.rename(downloaded_path, renamed_path)
-            downloaded_path = renamed_path
+        else:
+            renamed_path = downloaded_path
 
         thumbnail = await get_thumbnail(user_id)
         caption = await get_caption(user_id) or f"📄 <b>{os.path.basename(renamed_path)}</b>"
@@ -220,6 +226,8 @@ async def process_file(client: Client, message: Message, status_message: Message
             pass
     finally:
         for path in {downloaded_path, renamed_path}:
-            await delete_local_file(path)
+            if path and path != downloaded_path:
+                await delete_local_file(path)
+        await delete_local_file(downloaded_path)
         if record_id:
             await delete_temporary_file(record_id)
