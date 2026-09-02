@@ -42,10 +42,6 @@ app = Client(
 )
 
 
-# ============================================================
-# /START & /HELP
-# ============================================================
-
 @app.on_message(filters.command("start"))
 async def start_command(client, message):
     user = message.from_user
@@ -56,7 +52,7 @@ async def start_command(client, message):
         f"🦋 <b>Hello {name}!</b>\n\n"
         "Welcome to <b>RenameFile Bot</b>.\n\n"
         "⚙️ <b>Commands:</b>\n"
-        "• <code>/format {{chapter}} {{title}} {{channel_name}}</code>\n"
+        "• <code>/format {title} - Ch {chapter} [{channel}]</code>\n"
         "• <code>/set_thumb</code> - Reply to photo\n"
         "• <code>/set_channel {{channel_id}}</code>\n"
         "• <code>/upscale</code> - Reply to photo\n"
@@ -64,51 +60,38 @@ async def start_command(client, message):
     )
 
 
-# ============================================================
-# /FORMAT
-# ============================================================
-
 @app.on_message(filters.command("format") & filters.private)
 async def format_command(client, message):
-    args = message.text.split(maxsplit=3)
     user_id = message.from_user.id
-
-    if len(args) < 4:
+    
+    if len(message.command) < 2:
         config = await get_user_config(user_id)
         current = config.get("format", "{title} - Ch {chapter} [{channel}]")
         await message.reply_text(
             "<b>Usage Pattern:</b>\n"
-            "<code>/format {chapter} {title} {channel_name}</code>\n\n"
-            "<b>Example:</b>\n"
-            "<code>/format {chapter} Solo Leveling @MangaVault</code>\n"
-            "<i>Note: Pass '{title}' as title to extract original filename dynamically.</i>\n\n"
+            "<code>/format {title} - Ch {chapter} [{channel}]</code>\n\n"
+            "<b>Available Variables:</b>\n"
+            "• <code>{title}</code> - Original filename / Title\n"
+            "• <code>{chapter}</code> - Detected Chapter / Episode\n"
+            "• <code>{channel}</code> - Channel Tag\n"
+            "• <code>{quality}</code> - Video/Image Quality\n\n"
             f"<b>Current Format:</b> <code>{current}</code>"
         )
         return
 
-    _, raw_chapter, raw_title, raw_channel = args
-
-    title_val = None if raw_title.lower() == "{title}" else raw_title
-    template_fmt = f"{raw_title} - Ch {raw_chapter} [{raw_channel}]"
+    # Extract format directly after '/format '
+    template_fmt = message.text.split(maxsplit=1)[1]
 
     await set_format_config(
         user_id=user_id,
-        template=template_fmt,
-        title=title_val,
-        channel_name=raw_channel
+        template=template_fmt
     )
 
     await message.reply_text(
         "✅ <b>Rename Template Configured!</b>\n\n"
-        f"<b>Format:</b> <code>{template_fmt}</code>\n"
-        f"<b>Auto Title:</b> <code>{'Enabled' if not title_val else title_val}</code>\n"
-        f"<b>Channel Tag:</b> <code>{raw_channel}</code>"
+        f"<b>Format:</b> <code>{template_fmt}</code>"
     )
 
-
-# ============================================================
-# /SET_CHANNEL
-# ============================================================
 
 @app.on_message(filters.command("set_channel") & filters.private)
 async def set_channel_command(client, message):
@@ -123,10 +106,6 @@ async def set_channel_command(client, message):
     except ValueError:
         await message.reply_text("❌ Invalid Channel ID format. Must be an integer.")
 
-
-# ============================================================
-# /SET_THUMB
-# ============================================================
 
 @app.on_message(filters.command(["set_thumb", "setthumb"]))
 async def setthumb_command(client, message):
@@ -144,10 +123,6 @@ async def setthumb_command(client, message):
     except Exception as e:
         await message.reply_text(f"❌ Failed to save thumbnail: <code>{str(e)[:500]}</code>")
 
-
-# ============================================================
-# /UPSCALE & /ENHANCE
-# ============================================================
 
 @app.on_message(filters.command("upscale") & filters.private)
 async def upscale_command(client, message):
@@ -167,10 +142,6 @@ async def enhance_command(client, message):
     await enhance_image(client, message, reply)
 
 
-# ============================================================
-# AUTOMATIC FILE DISPATCHER
-# ============================================================
-
 @app.on_message(filters.document | filters.video | filters.audio)
 async def file_handler(client, message):
     if message.from_user and message.from_user.is_bot:
@@ -179,10 +150,6 @@ async def file_handler(client, message):
     status = await message.reply_text("📥 <b>File received... Processing...</b>")
     await process_file(client, message, status)
 
-
-# ============================================================
-# RUN BOT
-# ============================================================
 
 async def main():
     try:
