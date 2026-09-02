@@ -1,32 +1,22 @@
 import os
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import certifi
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import Config
 
 LOGGER = logging.getLogger(__name__)
 
-# ============================================================
-# MONGODB CONNECTION
-# ============================================================
-
-mongo = AsyncIOMotorClient(Config.DB_URL)
+mongo = AsyncIOMotorClient(Config.DB_URL, tlsCAFile=certifi.where())
 db = mongo[Config.DB_NAME]
 
 users = db["users"]
 temporary = db["temporary"]
 
 
-# ============================================================
-# USER & CONFIGURATION
-# ============================================================
-
 async def get_user(user_id: int):
-    """
-    Get user settings. Creates user if missing.
-    """
     user = await users.find_one({"_id": user_id})
 
     if user:
@@ -40,8 +30,8 @@ async def get_user(user_id: int):
         "target_channel_id": None,
         "thumbnail": None,
         "caption": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
     }
 
     await users.insert_one(user)
@@ -53,17 +43,13 @@ async def get_user_config(user_id: int) -> dict:
 
 
 async def update_user(user_id: int, data: dict):
-    data["updated_at"] = datetime.utcnow()
+    data["updated_at"] = datetime.now(timezone.utc)
     await users.update_one(
         {"_id": user_id},
         {"$set": data},
         upsert=True
     )
 
-
-# ============================================================
-# RENAME FORMAT & CHANNEL SETTINGS
-# ============================================================
 
 async def set_format_config(user_id: int, template: str, title: str = None, channel_name: str = None):
     payload = {"format": template}
@@ -93,10 +79,6 @@ async def get_target_channel(user_id: int):
     return user.get("target_channel_id")
 
 
-# ============================================================
-# THUMBNAIL
-# ============================================================
-
 async def set_thumbnail(user_id: int, thumbnail_path: str):
     await update_user(user_id, {"thumbnail": thumbnail_path})
 
@@ -112,15 +94,11 @@ async def delete_thumbnail(user_id: int):
         {
             "$set": {
                 "thumbnail": None,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }
         }
     )
 
-
-# ============================================================
-# CAPTION
-# ============================================================
 
 async def set_caption(user_id: int, caption: str):
     await update_user(user_id, {"caption": caption})
@@ -137,23 +115,19 @@ async def delete_caption(user_id: int):
         {
             "$set": {
                 "caption": None,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }
         }
     )
 
 
-# ============================================================
-# TEMPORARY RECORDS
-# ============================================================
-
 async def add_temporary_file(user_id: int, file_path: str, seconds: int = 30):
-    expires_at = datetime.utcnow() + timedelta(seconds=seconds)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     result = await temporary.insert_one(
         {
             "user_id": user_id,
             "file_path": file_path,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
             "expires_at": expires_at,
         }
     )
@@ -167,7 +141,7 @@ async def delete_temporary_file(record_id):
 async def cleanup_expired_records():
     while True:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expired = temporary.find({"expires_at": {"$lte": now}})
             async for record in expired:
                 await temporary.delete_one({"_id": record["_id"]})
@@ -175,10 +149,6 @@ async def cleanup_expired_records():
             LOGGER.error(f"Temporary database cleanup error: {e}")
         await asyncio.sleep(10)
 
-
-# ============================================================
-# SETUP DATABASE
-# ============================================================
 
 async def setup_database():
     try:
