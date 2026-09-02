@@ -13,7 +13,7 @@ class Config(object):
     # Pyrogram client config
     API_ID = os.environ.get("API_ID", "31963776")
     API_HASH = os.environ.get("API_HASH", "d352f599aff861566030a3cbba3a0f75")
-    BOT_TOKEN = os.environ.get("BOT_TOKEN", "8776604643:AAHAArtcoI8ifzTQ0Z_UnCzkItCGuFJhXu8")
+    BOT_TOKEN = os.environ.get("BOT_TOKEN", "8763966819:AAGV4I8J3uNodxxmusxPBTzZVUm6lQo8A2U")
 
     # Database config
     DB_NAME = os.environ.get("DB_NAME", "autorenamefile")
